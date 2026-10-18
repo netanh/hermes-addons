@@ -1,0 +1,9 @@
+{
+  "images": ["nousresearch/hermes-agent"],
+  "page_size": 100,
+  "error_log_max_bytes": 52400,
+  "exclude_tags": ["latest", "nightly"],
+  "image_settings": {
+    "nousresearch/hermes-agent": {"tag_regex": "^v"}
+  }
+}

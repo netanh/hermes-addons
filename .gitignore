@@ -1,0 +1,13 @@
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Per-install configuration and runtime data (examples are tracked)
+config.local.json
+skills/*/config.json
+state.json
+errors.log
+*.state.json
+*.error.log
+*.tmp

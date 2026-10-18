@@ -1,0 +1,8 @@
+{
+  "repos": [
+    "NousResearch/hermes-agent",
+    "netanh/hermes-addons"
+  ],
+  "check_releases": true,
+  "check_tags": true
+}
