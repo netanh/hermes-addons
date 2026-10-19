@@ -69,7 +69,7 @@ Review the `[init]` output before scheduling. `init` establishes a full independ
 - `repos` (**required**): non-empty, unique list of `owner/repo` strings.
 - `check_releases` (default `true`): scan every page of published non-prerelease releases (drafts and prereleases are excluded, matching GitHub's latest full-release behavior).
 - `check_tags` (default `true`): scan every page of Git tags independently, even when releases exist.
-- At least one feed must be enabled. Unknown fields and malformed values are rejected. Every page is scanned so tags/releases between checks are not silently skipped. API call volume grows with repository history; schedule modestly and watch for rate-limit errors.
+- At least one feed must be enabled. Unknown fields and malformed values are rejected. Every page is scanned so tags/releases between checks are not silently skipped. API call volume grows with repository history: one full check costs one request per release page plus one per tag page (measured ~10 requests/run for four repos with deep history). Unauthenticated GitHub allows 60 requests/hour **per shared IP** — other tenants of that IP consume the same budget — so schedule modestly (hourly is a safe default unauthenticated) and watch for rate-limit errors.
 
 The executable is [scripts/monitor.py](scripts/monitor.py). Hermes' GitHub installer downloads the `SKILL.md` and its explicitly referenced support files; a repository checkout is needed only by maintainers who want to change source or run tests.
 
@@ -131,7 +131,7 @@ Initialize the config/state files in `SKILL_DIR` once before creating the job. A
 cronjob_manage(
   action="create",
   name="github-release-monitor",
-  schedule="0,15,30,45 * * * *",
+  schedule="0 * * * *",
   no_agent=true,
   script="github-release-monitor.sh",
   deliver="telegram:<chat_id>",
@@ -140,6 +140,8 @@ cronjob_manage(
 ```
 
 With `no_agent=true`, stdout is delivered verbatim and empty stdout sends nothing; process failures use `failure_deliver`. Because operational API errors are stdout, they are delivered as monitor output. Check for an existing job before creating a duplicate and prevent overlapping invocations. Plain cron can call the same wrapper.
+
+**Rate-limit budget.** Unauthenticated requests share a 60/hour cap per IP. A full check of four repos with deep history costs ~10 requests, so a 15-minute schedule spends 40/hour (67% of the cap) and collides with other tenants of the same IP; hourly spends ~10/hour (~17%). Conditional requests (`If-None-Match`/ETag) do **not** reduce quota unless the request carries an `Authorization` header — 304 responses still count against the unauthenticated limit. If faster polling is needed, use an authenticated token (5,000/hour) instead of shortening the interval.
 
 ## Verification and maintenance
 
