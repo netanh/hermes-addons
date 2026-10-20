@@ -84,7 +84,7 @@ def list_tags(owner, repo):
 def validate_config(config):
     if not isinstance(config, dict):
         raise ValueError("config must be a JSON object")
-    unknown = set(config) - {"repos", "check_releases", "check_tags"}
+    unknown = set(config) - {"repos", "check_releases", "check_tags", "repo_settings"}
     if unknown:
         raise ValueError("unknown config keys: " + ", ".join(sorted(unknown)))
     repos = config.get("repos")
@@ -92,6 +92,20 @@ def validate_config(config):
         raise ValueError("repos must be a non-empty list of owner/repository strings")
     if len(set(repos)) != len(repos):
         raise ValueError("repos must not contain duplicates")
+    repo_settings = config.get("repo_settings", {})
+    if not isinstance(repo_settings, dict):
+        raise ValueError("repo_settings must be a JSON object")
+    for repo, settings in repo_settings.items():
+        if repo not in set(repos):
+            raise ValueError(f"repo_settings references unknown repo: {repo!r}")
+        if not isinstance(settings, dict):
+            raise ValueError(f"repo_settings entry for {repo!r} must be a JSON object")
+        unknown_keys = set(settings) - {"check_releases", "check_tags"}
+        if unknown_keys:
+            raise ValueError(f"unknown repo_settings keys for {repo!r}: " + ", ".join(sorted(unknown_keys)))
+        for key in ("check_releases", "check_tags"):
+            if key in settings and not isinstance(settings[key], bool):
+                raise ValueError(f"repo_settings[{repo!r}].{key} must be a boolean")
     for key in ("check_releases", "check_tags"):
         if key in config and not isinstance(config[key], bool):
             raise ValueError(f"{key} must be a boolean")
@@ -141,11 +155,18 @@ def parse_repo(repo):
     return repo.split("/", 1)
 
 
-def _feed_functions(config):
+def _repo_feeds(config, repo):
+    """Resolve the feeds enabled for one repository.
+
+    ``repo_settings[repo]`` entries override the global ``check_releases`` /
+    ``check_tags`` defaults, so a single repository can be watched with only
+    one feed (or paused entirely) without affecting the others.
+    """
+    settings = config.get("repo_settings", {}).get(repo, {})
     feeds = []
-    if config.get("check_releases", True):
+    if settings.get("check_releases", config.get("check_releases", True)):
         feeds.append(("release", "known_releases", list_releases))
-    if config.get("check_tags", True):
+    if settings.get("check_tags", config.get("check_tags", True)):
         feeds.append(("tag", "known_tags", list_tags))
     return feeds
 
@@ -163,7 +184,7 @@ def check(config, state_path, init_only=False, error_log=None, force=False):
         owner, name = parse_repo(repo)
         entry = state.setdefault(repo, {})
         errors = entry.setdefault("errors", {})
-        for feed, state_key, fetcher in _feed_functions(config):
+        for feed, state_key, fetcher in _repo_feeds(config, repo):
             if init_only and state_key in entry and not force:
                 outputs.append(f"[init] {repo} {feed}: baseline exists; left unchanged")
                 continue

@@ -62,14 +62,20 @@ Review the `[init]` output before scheduling. `init` establishes a full independ
     "netanh/hermes-addons"
   ],
   "check_releases": true,
-  "check_tags": true
+  "check_tags": true,
+  "repo_settings": {
+    "NousResearch/hermes-agent": {
+      "check_tags": false
+    }
+  }
 }
 ```
 
 - `repos` (**required**): non-empty, unique list of `owner/repo` strings.
 - `check_releases` (default `true`): scan every page of published non-prerelease releases (drafts and prereleases are excluded, matching GitHub's latest full-release behavior).
 - `check_tags` (default `true`): scan every page of Git tags independently, even when releases exist.
-- At least one feed must be enabled. Unknown fields and malformed values are rejected. Every page is scanned so tags/releases between checks are not silently skipped. API call volume grows with repository history: one full check costs one request per release page plus one per tag page (measured ~10 requests/run for four repos with deep history). Unauthenticated GitHub allows 60 requests/hour **per shared IP** — other tenants of that IP consume the same budget — so schedule modestly (hourly is a safe default unauthenticated) and watch for rate-limit errors.
+- `repo_settings` (optional): per-repository overrides of the two feed flags, keyed by an exact `owner/repo` from `repos`; unknown keys are rejected so typos fail loudly. A repository without an entry inherits the globals; disabling both feeds pauses that repository while keeping its state. Keep overrides per repository — a global flag change affects every monitored repository. Typical use: a repository whose tag feed is noisy or heavy (canary or release-candidate builds), where disabling the tag feed cuts both API volume and notification noise at the cost of not seeing tags published without a release. A disabled feed keeps its last snapshot frozen; re-enabling it resumes the set-diff from that snapshot.
+- At least one feed must be enabled. Unknown fields and malformed values are rejected. Every page is scanned so tags/releases between checks are not silently skipped. API call volume grows with repository history: one full check costs one request per release page plus one per tag page (measured ~10 requests/run for four repos with deep history; ~7 with the heaviest tag feed disabled via `repo_settings`). Unauthenticated GitHub allows 60 requests/hour **per shared IP** — other tenants of that IP consume the same budget — so schedule modestly (hourly is a safe default unauthenticated) and watch for rate-limit errors.
 
 The executable is [scripts/monitor.py](scripts/monitor.py). Hermes' GitHub installer downloads the `SKILL.md` and its explicitly referenced support files; a repository checkout is needed only by maintainers who want to change source or run tests.
 
@@ -97,7 +103,7 @@ The state file is a JSON object keyed by repository. `known_releases` stores rel
 
 Each check fetches all pages before replacing that feed's snapshot. If any page fails, the incomplete feed snapshot is not advanced; a successful independent feed can still update. Success clears only that feed's error record. `errors` is omitted when no feeds are failing; each error stores first/last failure times, count, and latest message (truncated to 500 characters). State writes use a unique temporary file followed by atomic replacement. Prevent overlapping invocations against one state file; atomic replacement does not serialize concurrent read/modify/write runs.
 
-A full set-diff detects tags/releases that are still present at the next poll, regardless of where they appeared in the API's ordering. It cannot detect an item created and deleted between polls, or a tag deleted and recreated with the same name. Polling is not a substitute for a GitHub webhook/event log. Scanning every page costs more API requests for repositories with long histories.
+A full set-diff detects tags/releases that are still present at the next poll, regardless of where they appeared in the API's ordering. Stopping at the first already-known item (early-stop pagination) or trusting the API's first item as "latest" is not safe: after NousResearch/hermes-agent switched from date-based to semver tags, the tags endpoint still returned the month-old v2026.9.24 first while v0.22.2 sat mid-list, so a latest-only or early-stop scan would have stayed blind to the entire new scheme with no error. Reduce volume with the schedule or per-repo feed toggles instead. It cannot detect an item created and deleted between polls, or a tag deleted and recreated with the same name. Polling is not a substitute for a GitHub webhook/event log. Scanning every page costs more API requests for repositories with long histories.
 
 ## Output and error handling
 

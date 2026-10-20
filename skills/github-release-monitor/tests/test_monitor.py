@@ -159,6 +159,69 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(json.loads(self.state.read_text()), {"ok": {}})
         self.assertEqual(list(Path(self.tmp.name).glob("*.tmp")), [])
 
+    def test_repo_settings_disable_one_feed_for_one_repo_only(self):
+        cfg = {"repos": ["acme/a", "acme/b"], "repo_settings": {"acme/a": {"check_tags": False}}}
+        self.state.write_text(json.dumps({
+            "acme/a": {"known_releases": ["1"], "known_tags": ["old"]},
+            "acme/b": {"known_releases": ["1"], "known_tags": ["old"]},
+        }))
+        releases = {"1": release("1", "v1"), "2": release("2", "v2")}
+        tags = {"old": tag("old"), "new": tag("new")}
+        with patch.object(monitor, "list_releases", return_value=releases), \
+             patch.object(monitor, "list_tags", return_value=tags) as tags_mock:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                monitor.check(cfg, self.state)
+        self.assertEqual([call.args for call in tags_mock.call_args_list], [("acme", "b")])
+        lines = out.getvalue().splitlines()
+        self.assertEqual(sum("NEW RELEASE:" in line for line in lines), 2)
+        self.assertEqual(
+            [line for line in lines if "NEW TAG:" in line],
+            ["[acme/b] NEW TAG: new — https://example/tags/new"],
+        )
+
+    def test_repo_settings_can_pause_a_repo_entirely(self):
+        cfg = {"repos": ["acme/a"], "repo_settings": {"acme/a": {"check_releases": False, "check_tags": False}}}
+        self.state.write_text(json.dumps({"acme/a": {"known_releases": ["1"], "known_tags": ["old"]}}))
+        with patch.object(monitor, "list_releases") as releases_mock, \
+             patch.object(monitor, "list_tags") as tags_mock:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                monitor.check(cfg, self.state)
+        releases_mock.assert_not_called()
+        tags_mock.assert_not_called()
+        self.assertEqual(out.getvalue().strip(), "")
+
+    def test_init_respects_repo_settings(self):
+        cfg = {"repos": ["acme/a", "acme/b"], "repo_settings": {"acme/a": {"check_tags": False}}}
+        with patch.object(monitor, "list_releases", return_value={"1": release("1", "v1")}), \
+             patch.object(monitor, "list_tags", return_value={"v1": tag("v1")}) as tags_mock:
+            monitor.check(cfg, self.state, init_only=True)
+        self.assertEqual([call.args for call in tags_mock.call_args_list], [("acme", "b")])
+        saved = json.loads(self.state.read_text())
+        self.assertNotIn("known_tags", saved["acme/a"])
+        self.assertEqual(saved["acme/b"]["known_tags"], ["v1"])
+
+    def test_config_rejects_invalid_repo_settings(self):
+        path = Path(self.tmp.name) / "config.json"
+        invalid_values = (
+            {"repos": ["acme/p"], "repo_settings": []},
+            {"repos": ["acme/p"], "repo_settings": {"acme/typo": {"check_tags": False}}},
+            {"repos": ["acme/p"], "repo_settings": {"acme/p": {"check_tag": False}}},
+            {"repos": ["acme/p"], "repo_settings": {"acme/p": {"check_tags": "no"}}},
+            {"repos": ["acme/p"], "repo_settings": {"acme/p": "off"}},
+        )
+        for value in invalid_values:
+            path.write_text(json.dumps(value))
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                monitor.load_config(path)
+
+    def test_config_accepts_valid_repo_settings(self):
+        path = Path(self.tmp.name) / "config.json"
+        value = {"repos": ["acme/p", "acme/q"], "repo_settings": {"acme/p": {"check_tags": False}}}
+        path.write_text(json.dumps(value))
+        self.assertEqual(monitor.load_config(path)["repo_settings"], {"acme/p": {"check_tags": False}})
+
 
 if __name__ == "__main__":
     unittest.main()
